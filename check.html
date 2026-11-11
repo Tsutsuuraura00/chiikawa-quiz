@@ -48,6 +48,13 @@ textarea:focus{outline:none; border-color:var(--grass)}
 .results b{font-family:"Jua",sans-serif; font-weight:400; font-size:1.1rem}
 .results .src{display:block; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:.82rem; color:var(--muted); word-break:break-all; margin-top:2px}
 .summary{margin:18px 0 0; color:var(--muted)}
+h2{font-family:"Jua",sans-serif; font-weight:400; font-size:1.6rem; margin:48px 0 6px}
+.row{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:16px}
+.row input{width:80px; font:inherit; color:var(--ink); background:var(--bg); border:2px solid var(--line); border-radius:12px; padding:9px 12px}
+.row .btn{margin-top:0}
+.winners{margin-top:16px; padding:16px 18px; border-radius:14px; background:var(--grass-soft); border-left:5px solid var(--grass)}
+.winners b{font-family:"Jua",sans-serif; font-weight:400; font-size:1.15rem}
+.winners ol{margin:8px 0 0; padding-left:1.4em}
 </style>
 </head>
 <body>
@@ -61,6 +68,24 @@ textarea:focus{outline:none; border-color:var(--grass)}
   </div>
   <p class="summary" id="summary" hidden></p>
   <ul class="results" id="results"></ul>
+
+  <h2>이벤트 응모 확인 · 추첨</h2>
+  <p class="lead">모의고사 만점 이벤트용이에요. 구글폼 응답 시트에서 <b>닉네임</b>과 <b>응모 코드</b> 열을 함께 복사해 붙여넣으세요. 타임스탬프 열이 같이 들어와도 괜찮아요.</p>
+  <div class="sheet">
+    <label for="evInput">응답 붙여넣기</label>
+    <textarea id="evInput" placeholder="닉네임	EV-ABCD-EFGH"></textarea>
+    <button class="btn" id="evCheck" type="button">응모 확인</button>
+  </div>
+  <p class="summary" id="evSummary" hidden></p>
+  <ul class="results" id="evResults"></ul>
+  <div class="sheet" id="drawBox" hidden style="margin-top:20px">
+    <label>유효한 응모자 중에서 무작위로 추첨해요.</label>
+    <div class="row">
+      <input id="drawN" type="number" min="1" value="1" aria-label="당첨 인원"> 명
+      <button class="btn" id="drawBtn" type="button">추첨하기</button>
+    </div>
+    <div class="winners" id="winners" hidden></div>
+  </div>
 </main>
 
 <script>
@@ -116,6 +141,57 @@ document.getElementById("checkBtn").addEventListener("click", async () => {
   }
   sum.hidden = false; sum.textContent = `${lines.length}건 중 ${ok}건 확인됐어요.`;
 });
+// ── 이벤트 응모 코드 (모의고사 사이트와 같은 값이어야 합니다) ──
+const EVENT_ID = "event-01";
+const EVENT_SALT = "meonjakgwi-perfect";
+async function makeEventCode(name){
+  const norm = name.replace(/\s+/g,"").toLowerCase();
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${norm}|${EVENT_ID}|${EVENT_SALT}`));
+  const h = new Uint8Array(buf), A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let c = "";
+  for(let i=0;i<8;i++) c += A[h[i] % 32];
+  return `EV-${c.slice(0,4)}-${c.slice(4)}`;
+}
+let validEntrants = [];
+document.getElementById("evCheck").addEventListener("click", async () => {
+  const lines = document.getElementById("evInput").value.split(/\n/).map(x => x.trim()).filter(Boolean);
+  const ul = document.getElementById("evResults"); ul.innerHTML = "";
+  const seen = new Set(); validEntrants = []; let bad = 0, dup = 0;
+  for(const line of lines){
+    const parts = line.split(/\t|\||,|\s\/\s/).map(x => x.trim()).filter(Boolean);
+    const ci = parts.findIndex(x => /^EV-?[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(x.replace(/\s/g,"")));
+    let ok = false, msg;
+    if(ci < 0){ msg = "응모 코드를 찾을 수 없어요"; }
+    else{
+      const name = ci > 0 ? parts[ci-1] : (parts[1] || "");
+      const raw = parts[ci].toUpperCase().replace(/[^A-Z0-9]/g,"").replace(/^EV/,"");
+      const code = `EV-${raw.slice(0,4)}-${raw.slice(4)}`;
+      const key = name.replace(/\s+/g,"").toLowerCase();
+      if(!name){ msg = "닉네임이 비어 있어요"; }
+      else if(await makeEventCode(name) !== code){ msg = `${name} · 닉네임과 코드가 맞지 않아요`; }
+      else if(seen.has(key)){ dup++; msg = `${name} · 중복 응모 (한 번만 인정)`; }
+      else { ok = true; seen.add(key); validEntrants.push(name); msg = `${name} · 유효한 응모`; }
+    }
+    if(!ok) bad++;
+    const li = document.createElement("li"); li.className = ok ? "ok" : "no";
+    const b = document.createElement("b"); b.textContent = (ok ? "✅ " : "❌ ") + msg;
+    const src = document.createElement("span"); src.className = "src"; src.textContent = line;
+    li.append(b, src); ul.appendChild(li);
+  }
+  const sum = document.getElementById("evSummary"); sum.hidden = false;
+  sum.textContent = lines.length ? `${lines.length}건 중 유효 ${validEntrants.length}명${dup ? `, 중복 ${dup}건` : ""}${bad - dup > 0 ? `, 확인 불가 ${bad - dup}건` : ""}` : "붙여넣은 내용이 없어요.";
+  document.getElementById("drawBox").hidden = validEntrants.length === 0;
+  document.getElementById("winners").hidden = true;
+});
+document.getElementById("drawBtn").addEventListener("click", () => {
+  const n = Math.max(1, Math.min(validEntrants.length, +document.getElementById("drawN").value || 1));
+  const pool = validEntrants.slice();
+  for(let i = pool.length - 1; i > 0; i--){ const r = new Uint32Array(1); crypto.getRandomValues(r); const j = r[0] % (i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const box = document.getElementById("winners"); box.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = `당첨자 ${n}명 (응모 ${validEntrants.length}명 중)`;
+  const ol = document.createElement("ol"); pool.slice(0, n).forEach(name => { const li = document.createElement("li"); li.textContent = name; ol.appendChild(li); });
+  box.append(b, ol); box.hidden = false;
+});
+
 document.getElementById("clearBtn").addEventListener("click", () => {
   document.getElementById("input").value = ""; document.getElementById("results").innerHTML = "";
   document.getElementById("summary").hidden = true;
